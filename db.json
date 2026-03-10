@@ -1,0 +1,199 @@
+{
+  "users": [
+    {
+      "id": "u1",
+      "name": "Sunita Kapoor",
+      "email": "admin@attendflow.com",
+      "password": "admin123",
+      "role": "super_admin",
+      "team": "Leadership",
+      "teamId": null,
+      "teamName": null,
+      "manager": null,
+      "avatar": "SK"
+    },
+    {
+      "id": "u2",
+      "name": "Priya Mehta",
+      "email": "priya@attendflow.com",
+      "password": "priya123",
+      "role": "manager",
+      "team": "Engineering",
+      "teamId": "t1",
+      "teamName": "Engineering",
+      "manager": "u1",
+      "avatar": "PM"
+    },
+    {
+      "id": "u3",
+      "name": "Ravi Nair",
+      "email": "ravi@attendflow.com",
+      "password": "ravi123",
+      "role": "hr_admin",
+      "team": "HR",
+      "teamId": "t2",
+      "teamName": "HR",
+      "manager": "u1",
+      "avatar": "RN"
+    },
+    {
+      "id": "u4",
+      "name": "Arjun Sharma",
+      "email": "arjun@attendflow.com",
+      "password": "arjun123",
+      "role": "employee",
+      "team": "Engineering",
+      "teamId": "t1",
+      "teamName": "Engineering",
+      "manager": "u2",
+      "avatar": "AS"
+    },
+    {
+      "id": "u5",
+      "name": "Meera Patel",
+      "email": "meera@attendflow.com",
+      "password": "meera123",
+      "role": "employee",
+      "team": "Engineering",
+      "teamId": "t1",
+      "teamName": "Engineering",
+      "manager": "u2",
+      "avatar": "MP"
+    },
+    {
+      "id": "u6",
+      "name": "Karan Singh",
+      "email": "karan@attendflow.com",
+      "password": "karan123",
+      "role": "employee",
+      "team": "HR",
+      "teamId": "t2",
+      "teamName": "HR",
+      "manager": "u3",
+      "avatar": "KS"
+    }
+  ],
+  "teams": [
+    {
+      "id": "t1",
+      "name": "Engineering",
+      "description": "Product & software development",
+      "color": "#3B82F6",
+      "managerId": "u2",
+      "managerName": "Priya Mehta",
+      "memberCount": 3
+    },
+    {
+      "id": "t2",
+      "name": "HR",
+      "description": "Human resources & operations",
+      "color": "#10B981",
+      "managerId": "u3",
+      "managerName": "Ravi Nair",
+      "memberCount": 2
+    }
+  ],
+  "teamMembers": [
+    { "id": "tm1", "teamId": "t1", "teamName": "Engineering", "userId": "u2", "userName": "Priya Mehta",  "userRole": "manager"  },
+    { "id": "tm2", "teamId": "t1", "teamName": "Engineering", "userId": "u4", "userName": "Arjun Sharma", "userRole": "employee" },
+    { "id": "tm3", "teamId": "t1", "teamName": "Engineering", "userId": "u5", "userName": "Meera Patel",  "userRole": "employee" },
+    { "id": "tm4", "teamId": "t2", "teamName": "HR",          "userId": "u3", "userName": "Ravi Nair",    "userRole": "hr_admin" },
+    { "id": "tm5", "teamId": "t2", "teamName": "HR",          "userId": "u6", "userName": "Karan Singh",  "userRole": "employee" }
+  ],
+  "attendance": [
+    {
+      "id": "a1",
+      "userId": "u4",
+      "date": "2026-03-06",
+      "checkIn": "09:02",
+      "checkOut": "18:15",
+      "lat": "28.6139",
+      "lng": "77.2090",
+      "selfieUrl": null,
+      "status": "present"
+    },
+    {
+      "id": "a2",
+      "userId": "u4",
+      "date": "2026-03-07",
+      "checkIn": "09:18",
+      "checkOut": "18:05",
+      "lat": "28.6139",
+      "lng": "77.2090",
+      "selfieUrl": null,
+      "status": "present"
+    },
+    {
+      "id": "a3",
+      "userId": "u5",
+      "date": "2026-03-07",
+      "checkIn": "08:55",
+      "checkOut": "17:50",
+      "lat": "28.6139",
+      "lng": "77.2090",
+      "selfieUrl": null,
+      "status": "present"
+    }
+  ],
+  "leaves": [
+    {
+      "id": "l1",
+      "userId": "u4",
+      "userName": "Arjun Sharma",
+      "type": "Casual Leave",
+      "from": "2026-03-10",
+      "to": "2026-03-11",
+      "reason": "Personal work",
+      "status": "pending",
+      "approverId": "u2",
+      "appliedOn": "2026-03-05"
+    },
+    {
+      "id": "l2",
+      "userId": "u5",
+      "userName": "Meera Patel",
+      "type": "Sick Leave",
+      "from": "2026-03-04",
+      "to": "2026-03-04",
+      "reason": "Fever",
+      "status": "approved",
+      "approverId": "u2",
+      "appliedOn": "2026-03-03"
+    }
+  ],
+  "plans": [
+    {
+      "id": "p1",
+      "userId": "u4",
+      "date": "2026-03-09",
+      "plans": ["Review PR #42", "Team standup at 10am", "Write unit tests"],
+      "activities": ["Reviewed PR #42", "Attended standup", "Wrote 12 unit tests"]
+    }
+  ],
+  "shifts": [
+    {
+      "id": "s1",
+      "name": "Morning Shift",
+      "startTime": "09:00",
+      "endTime": "18:00",
+      "color": "#3B82F6",
+      "graceMinutes": 15
+    },
+    {
+      "id": "s2",
+      "name": "Night Shift",
+      "startTime": "21:00",
+      "endTime": "06:00",
+      "color": "#8B5CF6",
+      "graceMinutes": 15
+    }
+  ],
+  "holidays": [
+    { "id": "h1", "name": "Holi",            "date": "2026-03-14", "type": "National Holiday" },
+    { "id": "h2", "name": "Ram Navami",      "date": "2026-04-02", "type": "National Holiday" },
+    { "id": "h3", "name": "Good Friday",     "date": "2026-04-03", "type": "National Holiday" },
+    { "id": "h4", "name": "Company Picnic",  "date": "2026-03-21", "type": "Company Holiday"  }
+  ],
+  "notifications": [],
+  "sessions": []
+}
