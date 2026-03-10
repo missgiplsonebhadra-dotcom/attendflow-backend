@@ -18,7 +18,7 @@ if (!MONGO_URI) {
 
 // ── MongoDB connection ────────────────────────────────────────────────────
 let db;
-const client = new MongoClient(MONGO_URI, { maxPoolSize: 10 });
+const client = new MongoClient(MONGO_URI, { maxPoolSize: 10, tls: true, tlsAllowInvalidCertificates: false, serverSelectionTimeoutMS: 15000, connectTimeoutMS: 15000 });
 
 const connectDB = async () => {
   await client.connect();
