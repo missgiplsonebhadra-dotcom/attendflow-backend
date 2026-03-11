@@ -12,20 +12,19 @@ const DB_NAME   = process.env.DB_NAME || "attendflow";
 
 console.log("🚀 AttendFlow starting...");
 console.log("   PORT:", PORT);
-console.log("   DB_NAME:", DB_NAME);
-console.log("   MONGODB_URI:", MONGO_URI ? "✅ Set (" + MONGO_URI.replace(/:([^@]+)@/, ":****@").slice(0,50) + "...)" : "❌ NOT SET");
+console.log("   MONGODB_URI:", MONGO_URI ? "✅ Set" : "❌ NOT SET");
 
 if (!MONGO_URI) {
-  console.error("❌ MONGODB_URI is not set in environment variables!");
+  console.error("❌ MONGODB_URI is not set!");
   process.exit(1);
 }
 
 // ── MongoDB ───────────────────────────────────────────────────────────────
-let db;
+let db = null;
 const client = new MongoClient(MONGO_URI, {
   serverSelectionTimeoutMS: 30000,
+  family: 4,
   connectTimeoutMS: 30000,
-  socketTimeoutMS: 30000,
 });
 
 const connectDB = async () => {
@@ -82,7 +81,11 @@ const server = http.createServer((req, res) => {
 });
 
 const handleRequest = async (req, res) => {
-  if (req.method === "OPTIONS") { res.writeHead(204, { "Access-Control-Allow-Origin":"*","Access-Control-Allow-Headers":"Content-Type,x-token" }); res.end(); return; }
+  if (req.method === "OPTIONS") {
+    res.writeHead(204, { "Access-Control-Allow-Origin":"*","Access-Control-Allow-Headers":"Content-Type,x-token","Access-Control-Allow-Methods":"GET,POST,PUT,PATCH,DELETE,OPTIONS" });
+    res.end();
+    return;
+  }
 
   const parsed   = url.parse(req.url, true);
   const pathname = parsed.pathname.replace(/\/$/, "") || "/";
@@ -91,12 +94,22 @@ const handleRequest = async (req, res) => {
 
   console.log(`${new Date().toISOString().slice(11,19)} ${method} ${pathname}`);
 
-  try {
-    // Health check
-    if (method === "GET" && pathname === "/") {
-      return send(res, 200, { status: "ok", app: "AttendFlow API", db: DB_NAME, time: new Date().toISOString() });
-    }
+  // Health check — works even if DB not connected
+  if (method === "GET" && pathname === "/") {
+    return send(res, 200, {
+      status: "ok",
+      app: "AttendFlow API",
+      db: db ? "connected" : "connecting...",
+      time: new Date().toISOString()
+    });
+  }
 
+  // All other routes need DB
+  if (!db) {
+    return send(res, 503, { error: "Database connecting, please wait 10 seconds and try again" });
+  }
+
+  try {
     // POST /api/login
     if (method === "POST" && pathname === "/api/login") {
       const { email, password } = await readBody(req);
@@ -198,18 +211,20 @@ const handleRequest = async (req, res) => {
   }
 };
 
-// ── Start — server starts immediately, MongoDB connects separately ─────────
-// This prevents Render from killing the process before MongoDB connects
-server.listen(PORT, "0.0.0.0", () => {
-  console.log(`\n✅ HTTP server listening on port ${PORT}`);
-  console.log("========================================");
-  console.log("  AttendFlow API is LIVE ✓");
-  console.log("========================================\n");
-});
+// ── Start — connect MongoDB FIRST, then start HTTP server ─────────────────
+const start = async () => {
+  await connectDB();  // Wait for MongoDB before accepting requests
+  server.listen(PORT, "0.0.0.0", () => {
+    console.log(`\n✅ HTTP server listening on port ${PORT}`);
+    console.log("========================================");
+    console.log("  AttendFlow API is LIVE ✓");
+    console.log("========================================\n");
+  });
+};
 
-// Connect MongoDB after server starts
-connectDB().catch(err => {
-  console.error("❌ MongoDB connection failed:", err.message);
-  console.error("   Full error:", err);
-  // Don't exit — log the error but keep server running so Render doesn't restart loop
+start().catch(err => {
+  console.error("❌ Startup failed:", err.message);
+  // Retry after 5 seconds
+  console.log("🔄 Retrying in 5 seconds...");
+  setTimeout(() => start().catch(() => process.exit(1)), 5000);
 });
