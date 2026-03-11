@@ -1,17 +1,11 @@
 {
   "name": "attendflow-backend",
   "version": "1.0.0",
-  "description": "AttendFlow REST API",
   "main": "server.js",
-  "engines": {
-    "node": "18.x"
-  },
-  "scripts": {
-    "start": "node server.js",
-    "seed": "node seed.js"
-  },
+  "engines": { "node": "18.x" },
+  "scripts": { "start": "node server.js", "seed": "node seed.js" },
   "dependencies": {
-    "mongodb": "^5.9.2",
+    "mongodb": "5.9.2",
     "cors": "^2.8.5",
     "dotenv": "^16.3.1"
   }

@@ -4,36 +4,38 @@ require("dotenv").config();
 const http = require("http");
 const url  = require("url");
 const cors = require("cors");
-const { MongoClient, ObjectId } = require("mongodb");
 
 const PORT      = process.env.PORT || 3001;
 const MONGO_URI = process.env.MONGODB_URI;
 const DB_NAME   = process.env.DB_NAME || "attendflow";
 
-console.log("🚀 AttendFlow starting...");
-console.log("   PORT:", PORT);
+console.log("🚀 AttendFlow starting... Node:", process.version);
 console.log("   MONGODB_URI:", MONGO_URI ? "✅ Set" : "❌ NOT SET");
 
-if (!MONGO_URI) {
-  console.error("❌ MONGODB_URI is not set!");
-  process.exit(1);
-}
+if (!MONGO_URI) { console.error("❌ MONGODB_URI not set!"); process.exit(1); }
 
-// ── MongoDB ───────────────────────────────────────────────────────────────
+// ── MongoDB — lazy load to avoid SSL issues ───────────────────────────────
 let db = null;
-const client = new MongoClient(MONGO_URI, {
-  serverSelectionTimeoutMS: 30000,
-  family: 4,
-  connectTimeoutMS: 30000,
-});
 
-const connectDB = async () => {
-  console.log("🔌 Connecting to MongoDB...");
+const getDB = async () => {
+  if (db) return db;
+  const { MongoClient } = require("mongodb");
+  const client = new MongoClient(MONGO_URI, {
+    serverSelectionTimeoutMS: 30000,
+    connectTimeoutMS: 30000,
+    socketTimeoutMS: 45000,
+    maxPoolSize: 5,
+    family: 4,
+  });
   await client.connect();
   db = client.db(DB_NAME);
   await db.command({ ping: 1 });
   console.log("✅ MongoDB connected:", DB_NAME);
+  return db;
 };
+
+// Connect in background
+getDB().catch(err => console.error("❌ MongoDB init failed:", err.message));
 
 // ── CORS ──────────────────────────────────────────────────────────────────
 const corsMiddleware = cors({
@@ -43,6 +45,7 @@ const corsMiddleware = cors({
 });
 
 // ── Helpers ───────────────────────────────────────────────────────────────
+const { ObjectId } = require("mongodb");
 const newId = () => new ObjectId().toHexString();
 
 const readBody = (req) => new Promise((resolve) => {
@@ -82,7 +85,11 @@ const server = http.createServer((req, res) => {
 
 const handleRequest = async (req, res) => {
   if (req.method === "OPTIONS") {
-    res.writeHead(204, { "Access-Control-Allow-Origin":"*","Access-Control-Allow-Headers":"Content-Type,x-token","Access-Control-Allow-Methods":"GET,POST,PUT,PATCH,DELETE,OPTIONS" });
+    res.writeHead(204, {
+      "Access-Control-Allow-Origin": "*",
+      "Access-Control-Allow-Headers": "Content-Type,x-token",
+      "Access-Control-Allow-Methods": "GET,POST,PUT,PATCH,DELETE,OPTIONS"
+    });
     res.end();
     return;
   }
@@ -94,61 +101,53 @@ const handleRequest = async (req, res) => {
 
   console.log(`${new Date().toISOString().slice(11,19)} ${method} ${pathname}`);
 
-  // Health check — works even if DB not connected
+  // Health check — no DB needed
   if (method === "GET" && pathname === "/") {
-    return send(res, 200, {
-      status: "ok",
-      app: "AttendFlow API",
-      db: db ? "connected" : "connecting...",
-      time: new Date().toISOString()
-    });
-  }
-
-  // All other routes need DB
-  if (!db) {
-    return send(res, 503, { error: "Database connecting, please wait 10 seconds and try again" });
+    return send(res, 200, { status: "ok", app: "AttendFlow API", db: db ? "connected" : "connecting", time: new Date().toISOString() });
   }
 
   try {
+    const database = await getDB();
+
     // POST /api/login
     if (method === "POST" && pathname === "/api/login") {
       const { email, password } = await readBody(req);
-      const user = await db.collection("users").findOne({
+      const user = await database.collection("users").findOne({
         email: { $regex: new RegExp(`^${(email||"").trim()}$`, "i") },
         password: password || "",
       });
       if (!user) return send(res, 401, { error: "Invalid email or password" });
       const token = newId();
-      await db.collection("sessions").insertOne({ id: token, userId: user.id, createdAt: new Date() });
+      await database.collection("sessions").insertOne({ id: token, userId: user.id, createdAt: new Date() });
       return send(res, 200, { token, user: stripPassword(user) });
     }
 
     // POST /api/register
     if (method === "POST" && pathname === "/api/register") {
       const { name, email, password, role, team } = await readBody(req);
-      const exists = await db.collection("users").findOne({ email: { $regex: new RegExp(`^${(email||"")}$`, "i") } });
+      const exists = await database.collection("users").findOne({ email: { $regex: new RegExp(`^${(email||"")}$`, "i") } });
       if (exists) return send(res, 409, { error: "Email already registered" });
       const avatar  = (name||"??").split(" ").map(n => n[0]).join("").toUpperCase().slice(0,2);
       const newUser = { id: newId(), name, email, password, role, team, teamId: null, teamName: null, manager: null, avatar };
-      await db.collection("users").insertOne(newUser);
+      await database.collection("users").insertOne(newUser);
       const token = newId();
-      await db.collection("sessions").insertOne({ id: token, userId: newUser.id, createdAt: new Date() });
+      await database.collection("sessions").insertOne({ id: token, userId: newUser.id, createdAt: new Date() });
       return send(res, 201, { token, user: stripPassword(newUser) });
     }
 
     // POST /api/logout
     if (method === "POST" && pathname === "/api/logout") {
       const token = req.headers["x-token"];
-      if (token) await db.collection("sessions").deleteOne({ id: token });
+      if (token) await database.collection("sessions").deleteOne({ id: token });
       return send(res, 200, { ok: true });
     }
 
     // GET /api/me
     if (method === "GET" && pathname === "/api/me") {
       const token = req.headers["x-token"];
-      const sess  = await db.collection("sessions").findOne({ id: token });
+      const sess  = await database.collection("sessions").findOne({ id: token });
       if (!sess) return send(res, 401, { error: "Not authenticated" });
-      const user  = await db.collection("users").findOne({ id: sess.userId });
+      const user  = await database.collection("users").findOne({ id: sess.userId });
       if (!user)  return send(res, 404, { error: "User not found" });
       return send(res, 200, stripPassword(user));
     }
@@ -161,7 +160,7 @@ const handleRequest = async (req, res) => {
     const ALLOWED = ["users","teams","teamMembers","attendance","leaves","plans","shifts","holidays","notifications","sessions"];
     if (!ALLOWED.includes(collection)) return send(res, 404, { error: "Not found" });
 
-    const col = db.collection(collection);
+    const col = database.collection(collection);
 
     if (method === "GET" && !id) {
       const filter = buildFilter(query);
@@ -206,25 +205,19 @@ const handleRequest = async (req, res) => {
     send(res, 405, { error: "Method not allowed" });
 
   } catch (err) {
-    console.error("❌ Request error:", err.message);
+    console.error("❌ Error:", err.message);
+    // Reset db on connection error so next request retries
+    if (err.message.includes("SSL") || err.message.includes("topology") || err.message.includes("connect")) {
+      db = null;
+    }
     send(res, 500, { error: "Server error: " + err.message });
   }
 };
 
-// ── Start — connect MongoDB FIRST, then start HTTP server ─────────────────
-const start = async () => {
-  await connectDB();  // Wait for MongoDB before accepting requests
-  server.listen(PORT, "0.0.0.0", () => {
-    console.log(`\n✅ HTTP server listening on port ${PORT}`);
-    console.log("========================================");
-    console.log("  AttendFlow API is LIVE ✓");
-    console.log("========================================\n");
-  });
-};
-
-start().catch(err => {
-  console.error("❌ Startup failed:", err.message);
-  // Retry after 5 seconds
-  console.log("🔄 Retrying in 5 seconds...");
-  setTimeout(() => start().catch(() => process.exit(1)), 5000);
+// ── Start server immediately ──────────────────────────────────────────────
+server.listen(PORT, "0.0.0.0", () => {
+  console.log(`✅ HTTP server on port ${PORT}`);
+  console.log("========================================");
+  console.log("  AttendFlow API is LIVE ✓");
+  console.log("========================================");
 });
