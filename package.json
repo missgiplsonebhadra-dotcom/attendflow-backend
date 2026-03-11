@@ -3,9 +3,9 @@
   "version": "1.0.0",
   "main": "server.js",
   "engines": { "node": "18.x" },
-  "scripts": { "start": "node server.js", "seed": "node seed.js" },
+  "scripts": { "start": "node server.js" },
   "dependencies": {
-    "mongodb": "5.9.2",
+    "pg": "^8.11.3",
     "cors": "^2.8.5",
     "dotenv": "^16.3.1"
   }

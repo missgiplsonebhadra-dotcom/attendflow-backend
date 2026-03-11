@@ -1,52 +1,91 @@
-// backend/server.js — AttendFlow API Server
-
+// backend/server.js — AttendFlow API (PostgreSQL version)
 require("dotenv").config();
 const http = require("http");
 const url  = require("url");
 const cors = require("cors");
+const { Pool } = require("pg");
 
-const PORT      = process.env.PORT || 3001;
-const MONGO_URI = process.env.MONGODB_URI;
-const DB_NAME   = process.env.DB_NAME || "attendflow";
+const PORT         = process.env.PORT || 3001;
+const DATABASE_URL = process.env.DATABASE_URL;
 
 console.log("🚀 AttendFlow starting... Node:", process.version);
-console.log("   MONGODB_URI:", MONGO_URI ? "✅ Set" : "❌ NOT SET");
+console.log("   DATABASE_URL:", DATABASE_URL ? "✅ Set" : "❌ NOT SET");
 
-if (!MONGO_URI) { console.error("❌ MONGODB_URI not set!"); process.exit(1); }
+if (!DATABASE_URL) { console.error("❌ DATABASE_URL not set!"); process.exit(1); }
 
-// ── MongoDB — lazy load to avoid SSL issues ───────────────────────────────
-let db = null;
-
-const getDB = async () => {
-  if (db) return db;
-  const { MongoClient } = require("mongodb");
-  const client = new MongoClient(MONGO_URI, {
-    serverSelectionTimeoutMS: 30000,
-    connectTimeoutMS: 30000,
-    socketTimeoutMS: 45000,
-    maxPoolSize: 5,
-    family: 4,
-  });
-  await client.connect();
-  db = client.db(DB_NAME);
-  await db.command({ ping: 1 });
-  console.log("✅ MongoDB connected:", DB_NAME);
-  return db;
-};
-
-// Connect in background
-getDB().catch(err => console.error("❌ MongoDB init failed:", err.message));
-
-// ── CORS ──────────────────────────────────────────────────────────────────
-const corsMiddleware = cors({
-  origin: "*",
-  methods: ["GET","POST","PUT","PATCH","DELETE","OPTIONS"],
-  allowedHeaders: ["Content-Type","x-token","Authorization"],
+// ── PostgreSQL Pool ───────────────────────────────────────────────────────
+const pool = new Pool({
+  connectionString: DATABASE_URL,
+  ssl: { rejectUnauthorized: false },
+  max: 5,
 });
 
-// ── Helpers ───────────────────────────────────────────────────────────────
-const { ObjectId } = require("mongodb");
-const newId = () => new ObjectId().toHexString();
+// ── Init DB tables ────────────────────────────────────────────────────────
+const initDB = async () => {
+  const client = await pool.connect();
+  try {
+    await client.query(`
+      CREATE TABLE IF NOT EXISTS store (
+        key TEXT PRIMARY KEY,
+        value JSONB NOT NULL,
+        updated_at TIMESTAMPTZ DEFAULT NOW()
+      );
+    `);
+    // Seed default data if empty
+    const res = await client.query(`SELECT key FROM store WHERE key='users'`);
+    if (res.rows.length === 0) {
+      console.log("🌱 Seeding default data...");
+      const defaultData = {
+        users: [
+          {id:"u1",name:"Sunita Kapoor",email:"admin@attendflow.com",password:"admin123",role:"super_admin",team:"Leadership",teamId:null,teamName:null,manager:null,avatar:"SK"},
+          {id:"u2",name:"Priya Mehta",email:"priya@attendflow.com",password:"priya123",role:"manager",team:"Engineering",teamId:"t1",teamName:"Engineering",manager:"u1",avatar:"PM"},
+          {id:"u3",name:"Ravi Nair",email:"ravi@attendflow.com",password:"ravi123",role:"hr_admin",team:"HR",teamId:"t2",teamName:"HR",manager:"u1",avatar:"RN"},
+          {id:"u4",name:"Arjun Sharma",email:"arjun@attendflow.com",password:"arjun123",role:"employee",team:"Engineering",teamId:"t1",teamName:"Engineering",manager:"u2",avatar:"AS"},
+          {id:"u5",name:"Meera Patel",email:"meera@attendflow.com",password:"meera123",role:"employee",team:"Engineering",teamId:"t1",teamName:"Engineering",manager:"u2",avatar:"MP"},
+          {id:"u6",name:"Karan Singh",email:"karan@attendflow.com",password:"karan123",role:"employee",team:"HR",teamId:"t2",teamName:"HR",manager:"u3",avatar:"KS"},
+        ],
+        teams:[
+          {id:"t1",name:"Engineering",description:"Product & software development",color:"#3B82F6",managerId:"u2",managerName:"Priya Mehta",memberCount:3},
+          {id:"t2",name:"HR",description:"Human resources & operations",color:"#10B981",managerId:"u3",managerName:"Ravi Nair",memberCount:2},
+        ],
+        teamMembers:[],attendance:[],leaves:[],plans:[],
+        shifts:[
+          {id:"s1",name:"Morning Shift",startTime:"09:00",endTime:"18:00",color:"#3B82F6",graceMinutes:15},
+          {id:"s2",name:"Night Shift",startTime:"21:00",endTime:"06:00",color:"#8B5CF6",graceMinutes:15},
+        ],
+        holidays:[
+          {id:"h1",name:"Holi",date:"2026-03-14",type:"National Holiday"},
+          {id:"h2",name:"Ram Navami",date:"2026-04-02",type:"National Holiday"},
+          {id:"h3",name:"Good Friday",date:"2026-04-03",type:"National Holiday"},
+          {id:"h4",name:"Company Picnic",date:"2026-03-21",type:"Company Holiday"},
+        ],
+        notifications:[],sessions:[],
+      };
+      for (const [key, value] of Object.entries(defaultData)) {
+        await client.query(`INSERT INTO store(key,value) VALUES($1,$2) ON CONFLICT(key) DO NOTHING`, [key, JSON.stringify(value)]);
+      }
+      console.log("✅ Default data seeded");
+    }
+    console.log("✅ PostgreSQL connected & ready");
+  } finally {
+    client.release();
+  }
+};
+
+// ── DB helpers ────────────────────────────────────────────────────────────
+const getCollection = async (name) => {
+  const res = await pool.query(`SELECT value FROM store WHERE key=$1`, [name]);
+  return res.rows.length ? res.rows[0].value : [];
+};
+
+const saveCollection = async (name, data) => {
+  await pool.query(`INSERT INTO store(key,value,updated_at) VALUES($1,$2,NOW()) ON CONFLICT(key) DO UPDATE SET value=$2, updated_at=NOW()`, [name, JSON.stringify(data)]);
+};
+
+const newId = () => Math.random().toString(36).slice(2) + Date.now().toString(36);
+
+// ── HTTP Helpers ──────────────────────────────────────────────────────────
+const corsMiddleware = cors({ origin:"*", methods:["GET","POST","PUT","PATCH","DELETE","OPTIONS"], allowedHeaders:["Content-Type","x-token","Authorization"] });
 
 const readBody = (req) => new Promise((resolve) => {
   let body = "";
@@ -55,43 +94,21 @@ const readBody = (req) => new Promise((resolve) => {
 });
 
 const send = (res, status, data) => {
-  res.writeHead(status, {
-    "Content-Type": "application/json",
-    "Access-Control-Allow-Origin": "*",
-    "Access-Control-Allow-Headers": "Content-Type, x-token",
-  });
+  res.writeHead(status, { "Content-Type":"application/json","Access-Control-Allow-Origin":"*","Access-Control-Allow-Headers":"Content-Type,x-token" });
   res.end(JSON.stringify(data));
 };
 
-const stripPassword = (user) => {
-  if (!user) return null;
-  const { password, _id, ...safe } = user;
-  return safe;
-};
+const stripPassword = (user) => { if (!user) return null; const { password, ...safe } = user; return safe; };
 
-const buildFilter = (query) => {
-  const skip = ["_sort","_order","_limit"];
-  const filter = {};
-  for (const [k,v] of Object.entries(query)) {
-    if (!skip.includes(k)) filter[k] = v;
-  }
-  return filter;
-};
-
-// ── HTTP Server ───────────────────────────────────────────────────────────
+// ── Server ────────────────────────────────────────────────────────────────
 const server = http.createServer((req, res) => {
   corsMiddleware(req, res, () => handleRequest(req, res));
 });
 
 const handleRequest = async (req, res) => {
   if (req.method === "OPTIONS") {
-    res.writeHead(204, {
-      "Access-Control-Allow-Origin": "*",
-      "Access-Control-Allow-Headers": "Content-Type,x-token",
-      "Access-Control-Allow-Methods": "GET,POST,PUT,PATCH,DELETE,OPTIONS"
-    });
-    res.end();
-    return;
+    res.writeHead(204, {"Access-Control-Allow-Origin":"*","Access-Control-Allow-Headers":"Content-Type,x-token","Access-Control-Allow-Methods":"GET,POST,PUT,PATCH,DELETE,OPTIONS"});
+    res.end(); return;
   }
 
   const parsed   = url.parse(req.url, true);
@@ -101,54 +118,58 @@ const handleRequest = async (req, res) => {
 
   console.log(`${new Date().toISOString().slice(11,19)} ${method} ${pathname}`);
 
-  // Health check — no DB needed
-  if (method === "GET" && pathname === "/") {
-    return send(res, 200, { status: "ok", app: "AttendFlow API", db: db ? "connected" : "connecting", time: new Date().toISOString() });
-  }
-
   try {
-    const database = await getDB();
+    if (method === "GET" && pathname === "/") {
+      return send(res, 200, { status:"ok", app:"AttendFlow API", db:"PostgreSQL", time:new Date().toISOString() });
+    }
 
     // POST /api/login
     if (method === "POST" && pathname === "/api/login") {
       const { email, password } = await readBody(req);
-      const user = await database.collection("users").findOne({
-        email: { $regex: new RegExp(`^${(email||"").trim()}$`, "i") },
-        password: password || "",
-      });
-      if (!user) return send(res, 401, { error: "Invalid email or password" });
+      const users = await getCollection("users");
+      const user  = users.find(u => u.email.toLowerCase() === (email||"").toLowerCase().trim() && u.password === (password||""));
+      if (!user) return send(res, 401, { error:"Invalid email or password" });
       const token = newId();
-      await database.collection("sessions").insertOne({ id: token, userId: user.id, createdAt: new Date() });
-      return send(res, 200, { token, user: stripPassword(user) });
+      const sessions = await getCollection("sessions");
+      sessions.push({ id:token, userId:user.id, createdAt:new Date().toISOString() });
+      await saveCollection("sessions", sessions);
+      return send(res, 200, { token, user:stripPassword(user) });
     }
 
     // POST /api/register
     if (method === "POST" && pathname === "/api/register") {
       const { name, email, password, role, team } = await readBody(req);
-      const exists = await database.collection("users").findOne({ email: { $regex: new RegExp(`^${(email||"")}$`, "i") } });
-      if (exists) return send(res, 409, { error: "Email already registered" });
-      const avatar  = (name||"??").split(" ").map(n => n[0]).join("").toUpperCase().slice(0,2);
-      const newUser = { id: newId(), name, email, password, role, team, teamId: null, teamName: null, manager: null, avatar };
-      await database.collection("users").insertOne(newUser);
+      const users = await getCollection("users");
+      if (users.find(u => u.email.toLowerCase() === (email||"").toLowerCase()))
+        return send(res, 409, { error:"Email already registered" });
+      const avatar  = (name||"??").split(" ").map(n=>n[0]).join("").toUpperCase().slice(0,2);
+      const newUser = { id:newId(), name, email, password, role, team, teamId:null, teamName:null, manager:null, avatar };
+      users.push(newUser);
+      await saveCollection("users", users);
       const token = newId();
-      await database.collection("sessions").insertOne({ id: token, userId: newUser.id, createdAt: new Date() });
-      return send(res, 201, { token, user: stripPassword(newUser) });
+      const sessions = await getCollection("sessions");
+      sessions.push({ id:token, userId:newUser.id, createdAt:new Date().toISOString() });
+      await saveCollection("sessions", sessions);
+      return send(res, 201, { token, user:stripPassword(newUser) });
     }
 
     // POST /api/logout
     if (method === "POST" && pathname === "/api/logout") {
       const token = req.headers["x-token"];
-      if (token) await database.collection("sessions").deleteOne({ id: token });
-      return send(res, 200, { ok: true });
+      const sessions = await getCollection("sessions");
+      await saveCollection("sessions", sessions.filter(s => s.id !== token));
+      return send(res, 200, { ok:true });
     }
 
     // GET /api/me
     if (method === "GET" && pathname === "/api/me") {
-      const token = req.headers["x-token"];
-      const sess  = await database.collection("sessions").findOne({ id: token });
-      if (!sess) return send(res, 401, { error: "Not authenticated" });
-      const user  = await database.collection("users").findOne({ id: sess.userId });
-      if (!user)  return send(res, 404, { error: "User not found" });
+      const token    = req.headers["x-token"];
+      const sessions = await getCollection("sessions");
+      const sess     = sessions.find(s => s.id === token);
+      if (!sess) return send(res, 401, { error:"Not authenticated" });
+      const users    = await getCollection("users");
+      const user     = users.find(u => u.id === sess.userId);
+      if (!user) return send(res, 404, { error:"User not found" });
       return send(res, 200, stripPassword(user));
     }
 
@@ -156,68 +177,77 @@ const handleRequest = async (req, res) => {
     const parts      = pathname.split("/").filter(Boolean);
     const collection = parts[0];
     const id         = parts[1];
-
-    const ALLOWED = ["users","teams","teamMembers","attendance","leaves","plans","shifts","holidays","notifications","sessions"];
-    if (!ALLOWED.includes(collection)) return send(res, 404, { error: "Not found" });
-
-    const col = database.collection(collection);
+    const ALLOWED    = ["users","teams","teamMembers","attendance","leaves","plans","shifts","holidays","notifications","sessions"];
+    if (!ALLOWED.includes(collection)) return send(res, 404, { error:"Not found" });
 
     if (method === "GET" && !id) {
-      const filter = buildFilter(query);
-      let cursor = col.find(filter);
-      if (query._sort) cursor = cursor.sort({ [query._sort]: query._order === "desc" ? -1 : 1 });
-      let results = await cursor.toArray();
-      results = results.map(({ _id, ...r }) => r);
-      if (collection === "users") results = results.map(({ password, ...u }) => u);
-      return send(res, 200, results);
+      let items = await getCollection(collection);
+      // Apply query filters
+      for (const [k,v] of Object.entries(query)) {
+        if (["_sort","_order"].includes(k)) continue;
+        items = items.filter(i => String(i[k]) === String(v));
+      }
+      if (query._sort) items.sort((a,b) => query._order==="desc" ? (b[query._sort]>a[query._sort]?1:-1) : (a[query._sort]>b[query._sort]?1:-1));
+      if (collection==="users") items = items.map(({password,...u})=>u);
+      return send(res, 200, items);
     }
 
     if (method === "GET" && id) {
-      const item = await col.findOne({ id });
-      if (!item) return send(res, 404, { error: "Not found" });
-      const { _id, ...safe } = item;
-      if (collection === "users") { const { password, ...u } = safe; return send(res, 200, u); }
-      return send(res, 200, safe);
+      const items = await getCollection(collection);
+      const item  = items.find(i => i.id === id);
+      if (!item) return send(res, 404, { error:"Not found" });
+      if (collection==="users") { const {password,...u}=item; return send(res,200,u); }
+      return send(res, 200, item);
     }
 
     if (method === "POST" && !id) {
       const body    = await readBody(req);
-      const newItem = { id: newId(), ...body };
-      await col.insertOne(newItem);
-      const { _id, ...safe } = newItem;
-      return send(res, 201, safe);
+      const items   = await getCollection(collection);
+      const newItem = { id:newId(), ...body };
+      items.push(newItem);
+      await saveCollection(collection, items);
+      return send(res, 201, newItem);
     }
 
     if (method === "PATCH" && id) {
-      const body   = await readBody(req);
-      const result = await col.findOneAndUpdate({ id }, { $set: body }, { returnDocument: "after" });
-      if (!result) return send(res, 404, { error: "Not found" });
-      const { _id, ...safe } = result;
-      return send(res, 200, safe);
+      const body  = await readBody(req);
+      const items = await getCollection(collection);
+      const idx   = items.findIndex(i => i.id === id);
+      if (idx===-1) return send(res, 404, { error:"Not found" });
+      items[idx] = { ...items[idx], ...body };
+      await saveCollection(collection, items);
+      return send(res, 200, items[idx]);
     }
 
     if (method === "DELETE" && id) {
-      const result = await col.deleteOne({ id });
-      if (result.deletedCount === 0) return send(res, 404, { error: "Not found" });
-      return send(res, 200, { deleted: true });
+      const items  = await getCollection(collection);
+      const before = items.length;
+      const filtered = items.filter(i => i.id !== id);
+      if (filtered.length === before) return send(res, 404, { error:"Not found" });
+      await saveCollection(collection, filtered);
+      return send(res, 200, { deleted:true });
     }
 
-    send(res, 405, { error: "Method not allowed" });
+    send(res, 405, { error:"Method not allowed" });
 
-  } catch (err) {
+  } catch(err) {
     console.error("❌ Error:", err.message);
-    // Reset db on connection error so next request retries
-    if (err.message.includes("SSL") || err.message.includes("topology") || err.message.includes("connect")) {
-      db = null;
-    }
-    send(res, 500, { error: "Server error: " + err.message });
+    send(res, 500, { error:"Server error: " + err.message });
   }
 };
 
-// ── Start server immediately ──────────────────────────────────────────────
-server.listen(PORT, "0.0.0.0", () => {
-  console.log(`✅ HTTP server on port ${PORT}`);
-  console.log("========================================");
-  console.log("  AttendFlow API is LIVE ✓");
-  console.log("========================================");
+// ── Start ─────────────────────────────────────────────────────────────────
+const start = async () => {
+  await initDB();
+  server.listen(PORT, "0.0.0.0", () => {
+    console.log(`✅ Server running on port ${PORT}`);
+    console.log("========================================");
+    console.log("  AttendFlow API is LIVE ✓ (PostgreSQL)");
+    console.log("========================================");
+  });
+};
+
+start().catch(err => {
+  console.error("❌ Startup failed:", err.message);
+  process.exit(1);
 });
