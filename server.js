@@ -1,9 +1,13 @@
 // backend/server.js — AttendFlow API (PostgreSQL version)
 require("dotenv").config();
+
+// Force IPv4 BEFORE any network calls
+const dns = require("dns");
+dns.setDefaultResultOrder("ipv4first");
+
 const http = require("http");
 const url  = require("url");
 const cors = require("cors");
-const { Pool } = require("pg");
 
 const PORT         = process.env.PORT || 3001;
 const DATABASE_URL = process.env.DATABASE_URL;
@@ -13,21 +17,57 @@ console.log("   DATABASE_URL:", DATABASE_URL ? "✅ Set" : "❌ NOT SET");
 
 if (!DATABASE_URL) { console.error("❌ DATABASE_URL not set!"); process.exit(1); }
 
-// ── PostgreSQL Pool — Force IPv4 ─────────────────────────────────────────
-const dns = require("dns");
-dns.setDefaultResultOrder("ipv4first"); // Force IPv4
+// Parse connection string and resolve to IPv4
+const parseAndConnect = async () => {
+  const { Pool } = require("pg");
+  
+  // Try to resolve hostname to IPv4 first
+  const urlObj = new URL(DATABASE_URL);
+  const hostname = urlObj.hostname;
+  
+  console.log(`🔍 Resolving ${hostname}...`);
+  
+  const ipv4 = await new Promise((resolve, reject) => {
+    dns.resolve4(hostname, (err, addresses) => {
+      if (err) {
+        console.log("⚠️ IPv4 resolve failed, trying hostname directly");
+        resolve(null);
+      } else {
+        console.log(`✅ Resolved to IPv4: ${addresses[0]}`);
+        resolve(addresses[0]);
+      }
+    });
+  });
 
-const pool = new Pool({
-  connectionString: DATABASE_URL,
-  ssl: { rejectUnauthorized: false },
-  max: 5,
-  connectionTimeoutMillis: 30000,
-  idleTimeoutMillis: 30000,
-});
+  let connectionString = DATABASE_URL;
+  if (ipv4) {
+    // Replace hostname with IPv4 address
+    connectionString = DATABASE_URL.replace(hostname, ipv4);
+  }
+
+  const pool = new Pool({
+    connectionString,
+    ssl: { rejectUnauthorized: false },
+    max: 5,
+    connectionTimeoutMillis: 30000,
+  });
+
+  return pool;
+};
+
+// ── Helpers ───────────────────────────────────────────────────────────────
+let pool = null;
+
+const getPool = async () => {
+  if (pool) return pool;
+  pool = await parseAndConnect();
+  return pool;
+};
 
 // ── Init DB tables ────────────────────────────────────────────────────────
 const initDB = async () => {
-  const client = await pool.connect();
+  const p = await getPool();
+  const client = await p.connect();
   try {
     await client.query(`
       CREATE TABLE IF NOT EXISTS store (
@@ -36,13 +76,12 @@ const initDB = async () => {
         updated_at TIMESTAMPTZ DEFAULT NOW()
       );
     `);
-    // Seed default data if empty
     const res = await client.query(`SELECT key FROM store WHERE key='users'`);
     if (res.rows.length === 0) {
       console.log("🌱 Seeding default data...");
       const defaultData = {
         users: [
-          {id:"u1",name:"Sunita Kapoor",email:"admin@attendflow.com",password:"admin123",role:"super_admin",team:"Leadership",teamId:null,teamName:null,manager:null,avatar:"SK"},
+          {id:"u1",name:"Bittu Pandey",email:"admin@attendflow.com",password:"admin123",role:"super_admin",team:"Administration",teamId:null,teamName:null,manager:null,avatar:"BP"},
           {id:"u2",name:"Priya Mehta",email:"priya@attendflow.com",password:"priya123",role:"manager",team:"Engineering",teamId:"t1",teamName:"Engineering",manager:"u1",avatar:"PM"},
           {id:"u3",name:"Ravi Nair",email:"ravi@attendflow.com",password:"ravi123",role:"hr_admin",team:"HR",teamId:"t2",teamName:"HR",manager:"u1",avatar:"RN"},
           {id:"u4",name:"Arjun Sharma",email:"arjun@attendflow.com",password:"arjun123",role:"employee",team:"Engineering",teamId:"t1",teamName:"Engineering",manager:"u2",avatar:"AS"},
@@ -79,12 +118,14 @@ const initDB = async () => {
 
 // ── DB helpers ────────────────────────────────────────────────────────────
 const getCollection = async (name) => {
-  const res = await pool.query(`SELECT value FROM store WHERE key=$1`, [name]);
+  const p = await getPool();
+  const res = await p.query(`SELECT value FROM store WHERE key=$1`, [name]);
   return res.rows.length ? res.rows[0].value : [];
 };
 
 const saveCollection = async (name, data) => {
-  await pool.query(`INSERT INTO store(key,value,updated_at) VALUES($1,$2,NOW()) ON CONFLICT(key) DO UPDATE SET value=$2, updated_at=NOW()`, [name, JSON.stringify(data)]);
+  const p = await getPool();
+  await p.query(`INSERT INTO store(key,value,updated_at) VALUES($1,$2,NOW()) ON CONFLICT(key) DO UPDATE SET value=$2, updated_at=NOW()`, [name, JSON.stringify(data)]);
 };
 
 const newId = () => Math.random().toString(36).slice(2) + Date.now().toString(36);
@@ -128,7 +169,6 @@ const handleRequest = async (req, res) => {
       return send(res, 200, { status:"ok", app:"AttendFlow API", db:"PostgreSQL", time:new Date().toISOString() });
     }
 
-    // POST /api/login
     if (method === "POST" && pathname === "/api/login") {
       const { email, password } = await readBody(req);
       const users = await getCollection("users");
@@ -141,7 +181,6 @@ const handleRequest = async (req, res) => {
       return send(res, 200, { token, user:stripPassword(user) });
     }
 
-    // POST /api/register
     if (method === "POST" && pathname === "/api/register") {
       const { name, email, password, role, team } = await readBody(req);
       const users = await getCollection("users");
@@ -158,7 +197,6 @@ const handleRequest = async (req, res) => {
       return send(res, 201, { token, user:stripPassword(newUser) });
     }
 
-    // POST /api/logout
     if (method === "POST" && pathname === "/api/logout") {
       const token = req.headers["x-token"];
       const sessions = await getCollection("sessions");
@@ -166,7 +204,6 @@ const handleRequest = async (req, res) => {
       return send(res, 200, { ok:true });
     }
 
-    // GET /api/me
     if (method === "GET" && pathname === "/api/me") {
       const token    = req.headers["x-token"];
       const sessions = await getCollection("sessions");
@@ -178,7 +215,6 @@ const handleRequest = async (req, res) => {
       return send(res, 200, stripPassword(user));
     }
 
-    // Generic CRUD
     const parts      = pathname.split("/").filter(Boolean);
     const collection = parts[0];
     const id         = parts[1];
@@ -187,7 +223,6 @@ const handleRequest = async (req, res) => {
 
     if (method === "GET" && !id) {
       let items = await getCollection(collection);
-      // Apply query filters
       for (const [k,v] of Object.entries(query)) {
         if (["_sort","_order"].includes(k)) continue;
         items = items.filter(i => String(i[k]) === String(v));
@@ -225,10 +260,9 @@ const handleRequest = async (req, res) => {
     }
 
     if (method === "DELETE" && id) {
-      const items  = await getCollection(collection);
-      const before = items.length;
+      const items    = await getCollection(collection);
       const filtered = items.filter(i => i.id !== id);
-      if (filtered.length === before) return send(res, 404, { error:"Not found" });
+      if (filtered.length === items.length) return send(res, 404, { error:"Not found" });
       await saveCollection(collection, filtered);
       return send(res, 200, { deleted:true });
     }
@@ -237,22 +271,28 @@ const handleRequest = async (req, res) => {
 
   } catch(err) {
     console.error("❌ Error:", err.message);
+    pool = null; // Reset pool on error
     send(res, 500, { error:"Server error: " + err.message });
   }
 };
 
 // ── Start ─────────────────────────────────────────────────────────────────
 const start = async () => {
-  await initDB();
+  // Start HTTP server FIRST so Render doesn't kill us
   server.listen(PORT, "0.0.0.0", () => {
-    console.log(`✅ Server running on port ${PORT}`);
+    console.log(`✅ HTTP server on port ${PORT}`);
+  });
+  
+  // Then connect to DB
+  try {
+    await initDB();
     console.log("========================================");
     console.log("  AttendFlow API is LIVE ✓ (PostgreSQL)");
     console.log("========================================");
-  });
+  } catch(err) {
+    console.error("❌ DB init failed:", err.message);
+    // Don't exit — server is still running, will retry on requests
+  }
 };
 
-start().catch(err => {
-  console.error("❌ Startup failed:", err.message);
-  process.exit(1);
-});
+start();
