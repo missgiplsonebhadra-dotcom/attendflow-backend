@@ -13,11 +13,16 @@ console.log("   DATABASE_URL:", DATABASE_URL ? "✅ Set" : "❌ NOT SET");
 
 if (!DATABASE_URL) { console.error("❌ DATABASE_URL not set!"); process.exit(1); }
 
-// ── PostgreSQL Pool ───────────────────────────────────────────────────────
+// ── PostgreSQL Pool — Force IPv4 ─────────────────────────────────────────
+const dns = require("dns");
+dns.setDefaultResultOrder("ipv4first"); // Force IPv4
+
 const pool = new Pool({
   connectionString: DATABASE_URL,
   ssl: { rejectUnauthorized: false },
   max: 5,
+  connectionTimeoutMillis: 30000,
+  idleTimeoutMillis: 30000,
 });
 
 // ── Init DB tables ────────────────────────────────────────────────────────
