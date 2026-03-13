@@ -23,8 +23,10 @@ const createPool = () => {
   return new Pool({
     connectionString: DATABASE_URL,
     ssl: { rejectUnauthorized: false },
-    max: 5,
-    connectionTimeoutMillis: 30000,
+    max: 3,
+    connectionTimeoutMillis: 10000,
+    idleTimeoutMillis: 30000,
+    allowExitOnIdle: false,
   });
 };
 
@@ -37,7 +39,20 @@ const getPool = () => {
 };
 
 // ── Init DB tables ────────────────────────────────────────────────────────
-const initDB = async () => {
+const initDB = async (retries = 5) => {
+  for (let i = 0; i < retries; i++) {
+    try {
+      const p = getPool();
+      const client = await p.connect();
+      client.release();
+      break;
+    } catch(e) {
+      console.log(`⏳ DB connection attempt ${i+1}/${retries}...`);
+      if (i === retries - 1) throw e;
+      await new Promise(r => setTimeout(r, 3000));
+      pool = null; // reset pool and retry
+    }
+  }
   const p = getPool();
   const client = await p.connect();
   try {
