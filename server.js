@@ -17,56 +17,28 @@ console.log("   DATABASE_URL:", DATABASE_URL ? "✅ Set" : "❌ NOT SET");
 
 if (!DATABASE_URL) { console.error("❌ DATABASE_URL not set!"); process.exit(1); }
 
-// Parse connection string and resolve to IPv4
-const parseAndConnect = async () => {
+// Direct pool — IPv4 handled by dns.setDefaultResultOrder
+const createPool = () => {
   const { Pool } = require("pg");
-  
-  // Try to resolve hostname to IPv4 first
-  const urlObj = new URL(DATABASE_URL);
-  const hostname = urlObj.hostname;
-  
-  console.log(`🔍 Resolving ${hostname}...`);
-  
-  const ipv4 = await new Promise((resolve, reject) => {
-    dns.resolve4(hostname, (err, addresses) => {
-      if (err) {
-        console.log("⚠️ IPv4 resolve failed, trying hostname directly");
-        resolve(null);
-      } else {
-        console.log(`✅ Resolved to IPv4: ${addresses[0]}`);
-        resolve(addresses[0]);
-      }
-    });
-  });
-
-  let connectionString = DATABASE_URL;
-  if (ipv4) {
-    // Replace hostname with IPv4 address
-    connectionString = DATABASE_URL.replace(hostname, ipv4);
-  }
-
-  const pool = new Pool({
-    connectionString,
+  return new Pool({
+    connectionString: DATABASE_URL,
     ssl: { rejectUnauthorized: false },
     max: 5,
     connectionTimeoutMillis: 30000,
   });
-
-  return pool;
 };
 
 // ── Helpers ───────────────────────────────────────────────────────────────
 let pool = null;
 
-const getPool = async () => {
-  if (pool) return pool;
-  pool = await parseAndConnect();
+const getPool = () => {
+  if (!pool) pool = createPool();
   return pool;
 };
 
 // ── Init DB tables ────────────────────────────────────────────────────────
 const initDB = async () => {
-  const p = await getPool();
+  const p = getPool();
   const client = await p.connect();
   try {
     await client.query(`
@@ -118,13 +90,13 @@ const initDB = async () => {
 
 // ── DB helpers ────────────────────────────────────────────────────────────
 const getCollection = async (name) => {
-  const p = await getPool();
+  const p = getPool();
   const res = await p.query(`SELECT value FROM store WHERE key=$1`, [name]);
   return res.rows.length ? res.rows[0].value : [];
 };
 
 const saveCollection = async (name, data) => {
-  const p = await getPool();
+  const p = getPool();
   await p.query(`INSERT INTO store(key,value,updated_at) VALUES($1,$2,NOW()) ON CONFLICT(key) DO UPDATE SET value=$2, updated_at=NOW()`, [name, JSON.stringify(data)]);
 };
 
@@ -271,7 +243,7 @@ const handleRequest = async (req, res) => {
 
   } catch(err) {
     console.error("❌ Error:", err.message);
-    pool = null; // Reset pool on error
+    pool = null; // Reset pool on error - will reconnect next request
     send(res, 500, { error:"Server error: " + err.message });
   }
 };
