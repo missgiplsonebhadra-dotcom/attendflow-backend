@@ -215,7 +215,19 @@ const handleRequest = async (req, res) => {
         items = items.filter(i => String(i[k]) === String(v));
       }
       if (query._sort) items.sort((a,b) => query._order==="desc" ? (b[query._sort]>a[query._sort]?1:-1) : (a[query._sort]>b[query._sort]?1:-1));
-      if (collection==="users") items = items.map(({password,...u})=>u);
+      if (collection==="users") {
+        // Include password only for super_admin requests
+        const token = req.headers["x-token"];
+        const sessions = await getCollection("sessions");
+        const sess = sessions.find(s => s.id === token);
+        const allUsers = await getCollection("users");
+        const reqUser = allUsers.find(u => u.id === sess?.userId);
+        if (reqUser?.role === "super_admin") {
+          // Return with passwords for super admin
+          return send(res, 200, items);
+        }
+        items = items.map(({password,...u})=>u);
+      }
       return send(res, 200, items);
     }
 
@@ -263,6 +275,22 @@ const handleRequest = async (req, res) => {
   }
 };
 
+// ── Keep Alive — ping self every 10 minutes to prevent sleep ────────────
+const keepAlive = () => {
+  setInterval(() => {
+    const options = {
+      host: "attendflow-api.onrender.com",
+      path: "/",
+      method: "GET",
+    };
+    const req = http.request(options, (res) => {
+      console.log(`🔄 Keep-alive ping: ${res.statusCode}`);
+    });
+    req.on("error", () => {}); // ignore errors
+    req.end();
+  }, 10 * 60 * 1000); // every 10 minutes
+};
+
 // ── Start ─────────────────────────────────────────────────────────────────
 const start = async () => {
   // Start HTTP server FIRST so Render doesn't kill us
@@ -276,6 +304,7 @@ const start = async () => {
     console.log("========================================");
     console.log("  AttendFlow API is LIVE ✓ (PostgreSQL)");
     console.log("========================================");
+    keepAlive(); // Start keep-alive pings
   } catch(err) {
     console.error("❌ DB init failed:", err.message);
     // Don't exit — server is still running, will retry on requests
