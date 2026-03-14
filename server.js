@@ -202,6 +202,22 @@ const handleRequest = async (req, res) => {
       return send(res, 200, stripPassword(user));
     }
 
+    // ── Store endpoint for key-value data (leave_policy etc) ─────────────
+    if (pathname.startsWith("/store/")) {
+      const storeKey = pathname.replace("/store/", "");
+      if (method === "GET") {
+        const p = getPool();
+        const res2 = await p.query(`SELECT value FROM store WHERE key=$1`, [storeKey]);
+        const value = res2.rows.length ? res2.rows[0].value : null;
+        return send(res, 200, { key: storeKey, value });
+      }
+      if (method === "POST") {
+        const body = await readBody(req);
+        await saveCollection(storeKey, body.value);
+        return send(res, 200, { key: storeKey, value: body.value });
+      }
+    }
+
     const parts      = pathname.split("/").filter(Boolean);
     const collection = parts[0];
     const id         = parts[1];
