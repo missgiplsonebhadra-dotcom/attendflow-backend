@@ -174,7 +174,16 @@ const handleRequest = async (req, res) => {
       if (users.find(u => u.email.toLowerCase() === (email||"").toLowerCase()))
         return send(res, 409, { error:"Email already registered" });
       const avatar  = (name||"??").split(" ").map(n=>n[0]).join("").toUpperCase().slice(0,2);
-      const newUser = { id:newId(), name, email, password, role, team, teamId:null, teamName:null, manager:null, avatar };
+      // Auto-generate unique Employee ID
+      const maxNum = users.reduce((max, u) => {
+        if (u.employeeId && u.employeeId.startsWith("SGIPL")) {
+          const num = parseInt(u.employeeId.replace("SGIPL", "")) || 0;
+          return Math.max(max, num);
+        }
+        return max;
+      }, 0);
+      const employeeId = "SGIPL" + String(maxNum + 1).padStart(4, "0");
+      const newUser = { id:newId(), employeeId, name, email, password, role, team, teamId:null, teamName:null, manager:null, avatar };
       users.push(newUser);
       await saveCollection("users", users);
       const token = newId();
