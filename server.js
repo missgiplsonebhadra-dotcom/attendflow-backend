@@ -90,7 +90,7 @@ const initDB = async (retries = 5) => {
           {id:"h3",name:"Good Friday",date:"2026-04-03",type:"National Holiday"},
           {id:"h4",name:"Company Picnic",date:"2026-03-21",type:"Company Holiday"},
         ],
-        notifications:[],sessions:[],
+        notifications:[],sessions:[],rosters:[],
       };
       for (const [key, value] of Object.entries(defaultData)) {
         await client.query(`INSERT INTO store(key,value) VALUES($1,$2) ON CONFLICT(key) DO NOTHING`, [key, JSON.stringify(value)]);
@@ -230,7 +230,7 @@ const handleRequest = async (req, res) => {
     const parts      = pathname.split("/").filter(Boolean);
     const collection = parts[0];
     const id         = parts[1];
-    const ALLOWED    = ["users","teams","teamMembers","attendance","leaves","plans","shifts","holidays","notifications","sessions"];
+    const ALLOWED    = ["users","teams","teamMembers","attendance","leaves","plans","shifts","holidays","notifications","sessions","rosters"];
     if (!ALLOWED.includes(collection)) return send(res, 404, { error:"Not found" });
 
     if (method === "GET" && !id) {
