@@ -280,6 +280,7 @@ const handleRequest = async (req, res) => {
       if (idx===-1) return send(res, 404, { error:"Not found" });
       items[idx] = { ...items[idx], ...body };
       await saveCollection(collection, items);
+      console.log(`✅ PATCH ${collection}/${id} - updated fields: ${Object.keys(body).join(", ")}`);
       return send(res, 200, items[idx]);
     }
 
