@@ -268,6 +268,11 @@ const handleRequest = async (req, res) => {
       const body    = await readBody(req);
       const items   = await getCollection(collection);
       const newItem = { id:newId(), ...body };
+      // Ensure boolean types are preserved for notifications
+      if (collection === "notifications" && "read" in newItem) {
+        newItem.read = newItem.read === true || newItem.read === "true" ? true : false;
+        console.log(`📬 New notification: userId=${newItem.userId}, read=${newItem.read}, title=${newItem.title}`);
+      }
       items.push(newItem);
       await saveCollection(collection, items);
       return send(res, 201, newItem);
